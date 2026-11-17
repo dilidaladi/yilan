@@ -1,6 +1,6 @@
 # 一览 Yilan
 
-**简体中文** | [English](README.md)
+**简体中文** | [English](README.md) | [更新记录](CHANGELOG.md)
 
 <p align="center"><img src="design/yilan-icon.svg" width="128" alt="一览 Yilan 图标"></p>
 

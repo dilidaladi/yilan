@@ -4,21 +4,22 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// 缩略图磁盘缓存的文件名：由 路径 + 修改时间 + 文件大小 算出，任何一个变了就重新生成
+/// 缩略图磁盘缓存按路径、文件编号、修改时间和大小区分版本。
 enum ThumbnailCacheKey {
     /// 生成规则的版本号，改动缩略图尺寸或格式时加 1，旧缓存自动失效
-    static let version = 1
+    static let version = 2
 
-    static func make(path: String, modificationDate: Date, fileSize: Int64) -> String {
+    static func make(path: String, modificationDate: Date, fileSize: Int64, fileID: UInt64? = nil) -> String {
         // 修改时间取到毫秒，避免浮点误差导致同一文件算出不同的键
         let mtime = Int64((modificationDate.timeIntervalSince1970 * 1000).rounded())
-        let raw = "v\(version)|\(path)|\(mtime)|\(fileSize)"
+        let raw = "v\(version)|\(path)|\(mtime)|\(fileSize)|\(fileID.map(String.init) ?? "-")"
         let digest = SHA256.hash(data: Data(raw.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     static func make(for item: MediaItem) -> String {
-        make(path: item.url.standardizedFileURL.path, modificationDate: item.modificationDate, fileSize: item.fileSize)
+        make(path: item.url.standardizedFileURL.path, modificationDate: item.modificationDate,
+             fileSize: item.fileSize, fileID: item.fileID)
     }
 }
 
@@ -207,8 +208,8 @@ actor AsyncLimiter {
 final class ThumbnailStore {
     static let shared = ThumbnailStore()
 
-    private let memory = NSCache<NSURL, Thumbnail>()
-    private var inFlight: [URL: Task<Thumbnail?, Never>] = [:]
+    private let memory = NSCache<MediaItemCacheKey, Thumbnail>()
+    private var inFlight: [MediaItem: Task<Thumbnail?, Never>] = [:]
     private let limiter = AsyncLimiter(limit: max(2, ProcessInfo.processInfo.activeProcessorCount / 2))
 
     init() {
@@ -217,12 +218,7 @@ final class ThumbnailStore {
     }
 
     func cached(_ item: MediaItem) -> Thumbnail? {
-        memory.object(forKey: item.url as NSURL)
-    }
-
-    /// 这些文件变了：内存里的缩略图按路径存，要删掉（磁盘缓存按修改时间区分，不用管）
-    func forget(_ urls: Set<URL>) {
-        for url in urls { memory.removeObject(forKey: url as NSURL) }
+        memory.object(forKey: MediaItemCacheKey(item))
     }
 
     /// 内存紧张：清空内存缓存（磁盘缓存还在，需要时很快能读回来）
@@ -234,7 +230,7 @@ final class ThumbnailStore {
     func thumbnail(for item: MediaItem) async -> Thumbnail? {
         if let hit = cached(item) { return hit }
         let task: Task<Thumbnail?, Never>
-        if let running = inFlight[item.url] {
+        if let running = inFlight[item] {
             task = running
         } else {
             let limiter = self.limiter
@@ -248,17 +244,17 @@ final class ThumbnailStore {
                 await limiter.release()
                 return Task.isCancelled && result.failed ? nil : result
             }
-            inFlight[item.url] = task
+            inFlight[item] = task
         }
         let result = await withTaskCancellationHandler {
             await task.value
         } onCancel: {
             task.cancel()
         }
-        if inFlight[item.url] == task { inFlight[item.url] = nil }
+        if inFlight[item] == task { inFlight[item] = nil }
         guard let result else { return nil }
         let cost = result.image.map { $0.bytesPerRow * $0.height } ?? 1
-        memory.setObject(result, forKey: item.url as NSURL, cost: cost)
+        memory.setObject(result, forKey: MediaItemCacheKey(item), cost: cost)
         return result
     }
 }

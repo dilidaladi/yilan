@@ -11,10 +11,6 @@ extension BrowserModel {
         if visible { refreshInfo() } else { infoTask?.cancel() }
     }
 
-    private static func cacheKey(_ item: MediaItem) -> String {
-        "\(item.url.path)|\(item.modificationDate.timeIntervalSinceReferenceDate)|\(item.fileSize)"
-    }
-
     /// 面板开着时，读当前文件的信息。读得快就直接换成新内容（不闪）；
     /// 超过 120 毫秒还没读完，先显示“文件”组的基本信息
     func refreshInfo() {
@@ -23,8 +19,7 @@ extension BrowserModel {
             if current == nil { info = nil }
             return
         }
-        let key = Self.cacheKey(item)
-        if let cached = metadataCache[key] {
+        if let cached = metadataCache[item] {
             info = InfoContent.make(cached)
             return
         }
@@ -39,17 +34,14 @@ extension BrowserModel {
             fallback.cancel()
             guard !Task.isCancelled, item == current else { return }
             if metadataCache.count > 300 { metadataCache.removeAll() }
-            metadataCache[key] = meta
+            metadataCache[item] = meta
             info = InfoContent.make(meta)
         }
     }
 
     /// 文件变了（外部修改、删除）：忘掉它的缓存信息
     func forgetMetadata(for urls: Set<URL>) {
-        let paths = Set(urls.map(\.path))
-        metadataCache = metadataCache.filter { key, _ in
-            !paths.contains(String(key.split(separator: "|", maxSplits: 1).first ?? ""))
-        }
+        metadataCache = metadataCache.filter { !urls.contains($0.key.url) }
     }
 
     func copyInfo() {

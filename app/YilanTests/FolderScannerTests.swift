@@ -62,6 +62,15 @@ struct FolderScannerTests {
         #expect(result.items.first?.name == "a.png")
     }
 
+    @Test("明确打开不支持的文件，不应改为打开同目录里的图片")
+    func unsupportedFileDoesNotSelectAnother() throws {
+        let dir = try makeFolder(["img1.jpg", "notes.txt"])
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(throws: FolderScanner.Failure.unsupportedFile) {
+            try FolderScanner.open(dir.appendingPathComponent("notes.txt"))
+        }
+    }
+
     @Test("空文件夹")
     func emptyFolder() throws {
         let dir = try makeFolder(["readme.md"])

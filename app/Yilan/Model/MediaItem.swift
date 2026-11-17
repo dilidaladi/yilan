@@ -84,6 +84,15 @@ struct MediaItem: Identifiable, Hashable, Sendable {
     }
 }
 
+/// NSCache 需要对象键；用扫描到的文件版本区分同一路径的旧图和新图。
+final class MediaItemCacheKey: NSObject {
+    private let item: MediaItem
+
+    init(_ item: MediaItem) { self.item = item }
+    override var hash: Int { item.hashValue }
+    override func isEqual(_ object: Any?) -> Bool { (object as? MediaItemCacheKey)?.item == item }
+}
+
 /// 数字、大小、时长都用系统格式化，跟着当前语言和地区走（例如 1,000、3.9 MB、1:08）
 enum Formatting {
     /// 文件大小，例如 3.9 MB、860 KB；0 显示“0 字节 / 0 bytes”

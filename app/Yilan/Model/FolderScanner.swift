@@ -2,6 +2,12 @@ import Foundation
 
 /// 扫描文件夹：只读当前层（不含子文件夹），按文件名自然排序
 enum FolderScanner {
+    enum Failure: LocalizedError, Equatable {
+        case unsupportedFile
+
+        var errorDescription: String? { String(localized: "一览打不开这种文件") }
+    }
+
     struct Result: Sendable {
         let folder: URL
         let items: [MediaItem]
@@ -18,13 +24,15 @@ enum FolderScanner {
             let items = try scan(folder: url)
             return Result(folder: url, items: items, initialIndex: items.isEmpty ? nil : 0)
         }
+        guard let format = SupportedFormats.format(forExtension: url.pathExtension) else {
+            throw Failure.unsupportedFile
+        }
         let folder = url.deletingLastPathComponent()
         let items: [MediaItem]
         do {
             items = try scan(folder: folder)
         } catch {
             // 读不了文件夹，但打开的这个文件本身可以读：退化为只看这一个
-            guard let format = SupportedFormats.format(forExtension: url.pathExtension) else { throw error }
             let v = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .fileIdentifierKey])
             let single = MediaItem(url: url, format: format, fileSize: Int64(v?.fileSize ?? 0),
                                    modificationDate: v?.contentModificationDate ?? .distantPast, fileID: v?.fileIdentifier)

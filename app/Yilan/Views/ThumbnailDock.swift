@@ -75,9 +75,14 @@ struct ThumbnailStrip: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 6) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                            ThumbnailCell(item: item, selected: item == current, fresh: fresh.contains(item.url))
-                                .id(item.id)
-                                .onTapGesture { onSelect(index) }
+                            Button { onSelect(index) } label: {
+                                ThumbnailCell(item: item, selected: item == current, fresh: fresh.contains(item.url))
+                            }
+                            .buttonStyle(.plain)
+                            .help(item.name)
+                            .accessibilityLabel(item.name)
+                            .accessibilityAddTraits(item == current ? .isSelected : [])
+                            .id(item.id)
                         }
                     }
                     .padding(.horizontal, 8)
@@ -178,15 +183,13 @@ struct ThumbnailCell: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: selected)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .task(id: item.id) {
-            if thumb == nil || thumb?.image == nil && ThumbnailStore.shared.cached(item) == nil {
-                if let t = await ThumbnailStore.shared.thumbnail(for: item) { thumb = t }
+        .task(id: item) {
+            thumb = ThumbnailStore.shared.cached(item)
+            if thumb == nil {
+                let result = await ThumbnailStore.shared.thumbnail(for: item)
+                if !Task.isCancelled { thumb = result }
             }
         }
-        .help(item.name)
-        .accessibilityElement()
-        .accessibilityLabel(item.name)
-        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     @ViewBuilder private var content: some View {

@@ -19,7 +19,7 @@ struct FolderDiff: Equatable {
         var appeared = new.filter { oldByPath[$0.url.path] == nil }
         modified = new.filter { n in
             guard let o = oldByPath[n.url.path] else { return false }
-            return o.modificationDate != n.modificationDate || o.fileSize != n.fileSize
+            return o.fileID != n.fileID || o.modificationDate != n.modificationDate || o.fileSize != n.fileSize
         }
         for g in gone {
             guard let id = g.fileID, let i = appeared.firstIndex(where: { $0.fileID == id }) else { continue }

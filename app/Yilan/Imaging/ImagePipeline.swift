@@ -8,9 +8,10 @@ actor ImagePipeline {
     typealias Decode = @Sendable (MediaItem, ImageDecoder.Variant) async throws -> DecodedImage
 
     struct Key: Hashable, Sendable {
-        let url: URL
-        let modificationDate: Date
+        let item: MediaItem
         let variant: ImageDecoder.Variant
+
+        var url: URL { item.url }
     }
 
     private final class KeyBox: NSObject {
@@ -34,7 +35,7 @@ actor ImagePipeline {
     }
 
     static func key(_ item: MediaItem, _ variant: ImageDecoder.Variant) -> Key {
-        Key(url: item.url, modificationDate: item.modificationDate, variant: variant)
+        Key(item: item, variant: variant)
     }
 
     /// 只查缓存，不触发解码
@@ -99,7 +100,7 @@ actor ImagePipeline {
     }
 
     /// 这些文件在磁盘上变了（文件夹同步）：忘掉记住的失败，下次重新解码。
-    /// 缓存按修改时间区分版本，旧版本会自然被挤出去
+    /// 缓存按文件版本区分，旧版本会自然被挤出去
     func forget(_ urls: Set<URL>) {
         failures = failures.filter { !urls.contains($0.key.url) }
     }

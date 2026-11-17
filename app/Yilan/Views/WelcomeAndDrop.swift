@@ -123,10 +123,8 @@ struct RecentRow: View {
     private static func loadCover(_ folder: RecentFolder) async -> CGImage? {
         guard let path = folder.coverPath else { return nil }
         let url = URL(fileURLWithPath: path)
-        guard let format = SupportedFormats.format(forExtension: url.pathExtension),
-              let v = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
-        let item = MediaItem(url: url, format: format, fileSize: Int64(v.fileSize ?? 0),
-                             modificationDate: v.contentModificationDate ?? .distantPast)
+        let item = await Task.detached(priority: .utility) { FolderScanner.item(at: url) }.value
+        guard !Task.isCancelled, let item else { return nil }
         return await ThumbnailStore.shared.thumbnail(for: item)?.image
     }
 }

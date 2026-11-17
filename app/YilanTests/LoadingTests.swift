@@ -356,6 +356,46 @@ struct FastSwitchTests {
             && model.placeholder == nil && model.failure == nil
     }
 
+    @Test("同名、同大小、同时间的替换文件会刷新主图和缩略图")
+    func sameMetadataReplacementRefreshes() async throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("yilan-sync-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("image.bmp")
+        let replacement = dir.appendingPathComponent(".replacement.bmp")
+        let date = Date(timeIntervalSince1970: 1_794_000_000)
+        for (file, width, height) in [(url, 4, 8), (replacement, 8, 4)] {
+            let dest = try #require(CGImageDestinationCreateWithURL(file as CFURL, UTType.bmp.identifier as CFString, 1, nil))
+            CGImageDestinationAddImage(dest, pixel(width, height), nil)
+            try #require(CGImageDestinationFinalize(dest))
+            try fm.setAttributes([.modificationDate: date], ofItemAtPath: file.path)
+        }
+
+        let model = BrowserModel(settings: AppSettings(defaults: freshDefaults()),
+                                 recents: RecentFolders(defaults: freshDefaults()), pipeline: ImagePipeline())
+        model.apply(try FolderScanner.open(url))
+        let old = try #require(model.current)
+        try #require(await waitUntil { isFullyShown(model, old) })
+        #expect(model.displayed?.pixelSize == CGSize(width: 4, height: 8))
+        let thumbs = ThumbnailStore()
+        #expect(await thumbs.thumbnail(for: old)?.image?.width == 4)
+        // 保持旧文件存在，确保文件系统不会重用其编号。
+        try fm.moveItem(at: url, to: dir.appendingPathComponent(".original.bmp"))
+        try fm.moveItem(at: replacement, to: url)
+        let updated = try FolderScanner.scan(folder: dir)
+        let current = try #require(updated.first)
+        try #require(current.fileID != old.fileID)
+        try #require(current.fileSize == old.fileSize && current.modificationDate == old.modificationDate)
+
+        model.applySync(updated)
+        try #require(await waitUntil { isFullyShown(model, current) })
+        #expect(model.displayed?.pixelSize == CGSize(width: 8, height: 4))
+        #expect(await thumbs.thumbnail(for: current)?.image?.width == 8)
+        // 新内存缓存也应从磁盘读到新版本，而不是旧缩略图。
+        #expect(await ThumbnailStore().thumbnail(for: current)?.image?.width == 8)
+    }
+
     @Test("0 → 最后 → 0 快速切换：最后停在第一张的完整解码上")
     func zeroLastZero() async {
         let fake = FakeDecoder()

@@ -95,7 +95,7 @@ final class BrowserModel {
     @ObservationIgnored private var toastTask: Task<Void, Never>?
     @ObservationIgnored private var hoveredControls: Set<String> = []
     @ObservationIgnored private var serial = 0
-    @ObservationIgnored private let ambientCache = NSCache<NSURL, CGImageBox>()
+    @ObservationIgnored private let ambientCache = NSCache<MediaItemCacheKey, CGImageBox>()
     /// 大图区所在屏幕的长边物理像素（由大图区报告；没报告前按当前屏幕估算）
     @ObservationIgnored var screenMaxPixel: Int?
     /// 播放器报告放不了的视频：它的静帧解码好了也不显示，保持出错卡片
@@ -107,7 +107,7 @@ final class BrowserModel {
     var infoVisible = false
     var info: InfoContent?
     @ObservationIgnored var infoTask: Task<Void, Never>?
-    @ObservationIgnored var metadataCache: [String: MediaMetadata] = [:]
+    @ObservationIgnored var metadataCache: [MediaItem: MediaMetadata] = [:]
 
     // MARK: 删除到废纸篓（BrowserModel+Trash）
 
@@ -189,7 +189,6 @@ final class BrowserModel {
         openError = nil
         saveRecentCover()
         Perf.mark("open")
-        NSDocumentController.shared.noteNewRecentDocumentURL(url)
         let pipeline = self.pipeline
         scanTask = Task {
             // 重新打开文件夹：之前记住的“打不开”可能已经过时（文件被修好或换掉）
@@ -200,6 +199,7 @@ final class BrowserModel {
             guard !Task.isCancelled else { return }
             switch result {
             case .success(let r):
+                NSDocumentController.shared.noteNewRecentDocumentURL(url)
                 // 换了文件夹：之前的删除不能再撤销（文件夹已经不在眼前）
                 if r.folder.standardizedFileURL.path != folderURL?.standardizedFileURL.path { undoStack.removeAll() }
                 apply(r)
@@ -507,13 +507,11 @@ final class BrowserModel {
         NSPasteboard.general.setString(path, forType: .string)
     }
 
-    /// 文件夹同步发现这些文件变了：清掉解码失败记录、缩略图、环境光和信息缓存
+    /// 清除变更路径的失败记录和信息；图片和环境光缓存按文件版本自然更新。
     func forgetCaches(for urls: Set<URL>) {
         guard !urls.isEmpty else { return }
         let pipeline = self.pipeline
         Task { await pipeline.forget(urls) }
-        ThumbnailStore.shared.forget(urls)
-        for url in urls { ambientCache.removeObject(forKey: url as NSURL) }
         forgetMetadata(for: urls)
     }
 
@@ -521,7 +519,7 @@ final class BrowserModel {
 
     private func updateAmbient(for item: MediaItem) {
         ambientTask?.cancel()
-        if let hit = ambientCache.object(forKey: item.url as NSURL) {
+        if let hit = ambientCache.object(forKey: MediaItemCacheKey(item)) {
             ambient = hit.image
             ambientItemURL = item.url
             return
@@ -535,14 +533,14 @@ final class BrowserModel {
     }
 
     private func prefetchAmbient(for item: MediaItem) {
-        guard ambientCache.object(forKey: item.url as NSURL) == nil else { return }
+        guard ambientCache.object(forKey: MediaItemCacheKey(item)) == nil else { return }
         Task { _ = await makeAmbient(for: item) }
     }
 
     private func makeAmbient(for item: MediaItem) async -> CGImage? {
         guard let thumb = await ThumbnailStore.shared.thumbnail(for: item)?.image else { return nil }
         let rendered = await Task.detached(priority: .userInitiated) { AmbientRenderer.render(thumb) }.value
-        if let rendered { ambientCache.setObject(CGImageBox(rendered), forKey: item.url as NSURL) }
+        if let rendered { ambientCache.setObject(CGImageBox(rendered), forKey: MediaItemCacheKey(item)) }
         return rendered
     }
 
