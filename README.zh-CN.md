@@ -8,9 +8,14 @@
 
 ## 界面预览
 
-下图是设计稿渲染图（用的是开源示意图）：
+<p align="center"><img src="docs/screenshots/zh-browse.jpg" width="820" alt="带缩略图栏的文件夹浏览"></p>
 
-![信息面板](design/v02-shots/01-info-photo.png)
+<table>
+  <tr>
+    <td><img src="docs/screenshots/zh-info.jpg" alt="带 EXIF 的信息面板"></td>
+    <td><img src="docs/screenshots/zh-video.jpg" alt="带控制条的视频播放"></td>
+  </tr>
+</table>
 
 ## 功能
 

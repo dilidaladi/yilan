@@ -8,9 +8,14 @@
 
 ## Preview
 
-The screenshot below is a design board render, using open-licensed placeholder photos:
+<p align="center"><img src="docs/screenshots/en-browse.jpg" width="820" alt="Browsing a folder with the thumbnail strip"></p>
 
-![Info panel](design/v02-shots/01-info-photo.png)
+<table>
+  <tr>
+    <td><img src="docs/screenshots/en-info.jpg" alt="Info panel with EXIF"></td>
+    <td><img src="docs/screenshots/en-video.jpg" alt="Video playback with the control bar"></td>
+  </tr>
+</table>
 
 ## Features
 
