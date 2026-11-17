@@ -1,0 +1,736 @@
+import AppKit
+import Observation
+import SwiftUI
+import UniformTypeIdentifiers
+
+/// 缩放指令：界面（菜单、快捷键）发给大图区
+struct ZoomCommand: Equatable {
+    enum Action: Equatable { case fit, actualSize, zoomIn, zoomOut, toggle }
+    let action: Action
+    let serial: Int
+}
+
+/// 顶部提示条：切换类型、删除、文件夹变化等
+struct Toast: Equatable {
+    let symbol: String
+    let text: String
+    /// 圆点后面的补充说明（例如“已显示下一个”）
+    var detail: String? = nil
+    /// 点了补充说明要做的事；有它时补充说明显示成蓝色可点的链接（“⌘Z 撤销”）
+    var action: ToastAction? = nil
+    let serial: Int
+}
+
+enum ToastAction: Equatable {
+    case undoDelete
+}
+
+/// 浏览状态：当前文件夹、类型切换、当前项、大图加载、控件显示
+@MainActor
+@Observable
+final class BrowserModel {
+    static let shared = BrowserModel()
+
+    // MARK: 文件夹
+
+    private(set) var folderURL: URL?
+    private(set) var allItems: [MediaItem] = []
+    /// 当前类型下的列表；缩略图栏、序号、上下切换都只针对它
+    private(set) var items: [MediaItem] = []
+    private(set) var filter: MediaFilter
+    private(set) var currentIndex: Int?
+    private(set) var counts: [MediaFilter: Int] = [.all: 0, .images: 0, .videos: 0]
+    private(set) var hasOpenedFolder = false
+    private(set) var openError: String?
+
+    var current: MediaItem? {
+        guard let i = currentIndex, items.indices.contains(i) else { return nil }
+        return items[i]
+    }
+
+    var isFirst: Bool { currentIndex == 0 }
+    var isLast: Bool { currentIndex.map { $0 >= items.count - 1 } ?? true }
+    /// 箭头是否可用：设置里打开“循环到第一个”后，两头也可以继续切
+    var canGoPrevious: Bool { currentIndex.flatMap { Navigation.target(from: $0, delta: -1, count: items.count, wrap: settings.wrapAround) } != nil }
+    var canGoNext: Bool { currentIndex.flatMap { Navigation.target(from: $0, delta: 1, count: items.count, wrap: settings.wrapAround) } != nil }
+
+    // MARK: 大图
+
+    private(set) var displayed: DecodedImage?
+    private(set) var displayedItem: MediaItem?
+    /// 大图还没解码好时先显示缩略图
+    private(set) var placeholder: CGImage?
+    private(set) var failure: DecodeFailure?
+    /// RAW：内嵌预览已显示，正在后台完整解码
+    private(set) var isDecodingRaw = false
+    private(set) var ambient: CGImage?
+    private(set) var ambientItemURL: URL?
+
+    // MARK: 界面
+
+    var stripVisible = true
+    private(set) var chromeVisible = true
+    private(set) var zoomCommand: ZoomCommand?
+    /// 当前缩放比例（100 = 1 像素对应 1 点）；适应窗口时为 nil
+    var zoomPercent: Int?
+    private(set) var toast: Toast?
+    /// 当前文件的显示旋转（顺时针 90° 的倍数，只影响显示，不改文件）；切换文件后复位
+    private(set) var rotation = 0
+
+    // MARK: 视频、设置、最近打开
+
+    let settings: AppSettings
+    let recents: RecentFolders
+    /// 播放器自己是 @Observable，界面直接观察它的播放状态
+    @ObservationIgnored let video: VideoPlayerController
+
+    @ObservationIgnored private let pipeline: ImagePipeline
+    @ObservationIgnored private var scanTask: Task<Void, Never>?
+    @ObservationIgnored private var loadTask: Task<Void, Never>?
+    @ObservationIgnored private var fullResTask: Task<Void, Never>?
+    @ObservationIgnored private var ambientTask: Task<Void, Never>?
+    @ObservationIgnored private var hideTask: Task<Void, Never>?
+    /// 自动隐藏的时间点：鼠标一直在动时只往后推，不每次都新建计时任务
+    @ObservationIgnored private var hideDeadline = ContinuousClock.now
+    @ObservationIgnored private var toastTask: Task<Void, Never>?
+    @ObservationIgnored private var hoveredControls: Set<String> = []
+    @ObservationIgnored private var serial = 0
+    @ObservationIgnored private let ambientCache = NSCache<NSURL, CGImageBox>()
+    /// 大图区所在屏幕的长边物理像素（由大图区报告；没报告前按当前屏幕估算）
+    @ObservationIgnored var screenMaxPixel: Int?
+    /// 播放器报告放不了的视频：它的静帧解码好了也不显示，保持出错卡片
+    @ObservationIgnored private var unplayable: MediaItem?
+
+    // MARK: 信息面板（BrowserModel+Info）
+
+    /// 面板开着时切换文件也保持打开
+    var infoVisible = false
+    var info: InfoContent?
+    @ObservationIgnored var infoTask: Task<Void, Never>?
+    @ObservationIgnored var metadataCache: [String: MediaMetadata] = [:]
+
+    // MARK: 删除到废纸篓（BrowserModel+Trash）
+
+    /// 等待确认删除的文件（显示确认对话框）
+    var pendingDelete: MediaItem?
+    /// 确认对话框里“不再询问”的勾选
+    var deleteDontAsk = false
+    var undoStack = TrashUndoStack()
+    /// 一览自己改动文件夹（删除、撤销）的次数：文件夹同步据此丢弃过期的扫描结果
+    @ObservationIgnored var localChangeSerial = 0
+    /// 正在移到废纸篓或放回：期间再按 ⌫ / ⌘Z 不重复执行
+    @ObservationIgnored var trashBusy = false
+
+    // MARK: 文件夹变化同步（BrowserModel+Sync）
+
+    /// 刚新增的文件：缩略图高亮 2 秒
+    var freshURLs: Set<URL> = []
+    @ObservationIgnored var watcher: FolderWatcher?
+    @ObservationIgnored var syncTask: Task<Void, Never>?
+    @ObservationIgnored var freshTask: Task<Void, Never>?
+
+    // MARK: 全屏（BrowserModel+FullScreen）
+
+    var isFullScreen = false
+    /// 全屏时鼠标碰到顶边：标题栏控件和菜单栏一起出现
+    var fullScreenTopRevealed = false
+    /// 全屏时鼠标在底部 120 点内：缩略图栏滑入
+    var fullScreenBottomRevealed = false
+    /// 全屏时鼠标在动：左右箭头淡入，静止 2 秒淡出
+    var fullScreenArrowsVisible = false
+    @ObservationIgnored var fullScreenBottomTask: Task<Void, Never>?
+    @ObservationIgnored var fullScreenIdleTask: Task<Void, Never>?
+    @ObservationIgnored var fullScreenHoveringDock = false
+    /// 主窗口是否是键盘焦点窗口（设置窗口在前面时，菜单里的单键快捷键不能删文件）
+    var mainWindowIsKey = true
+    @ObservationIgnored weak var window: NSWindow?
+    @ObservationIgnored var windowObservers: [NSObjectProtocol] = []
+
+    init(settings: AppSettings = .shared, recents: RecentFolders = .shared, pipeline: ImagePipeline = .shared) {
+        self.settings = settings
+        self.recents = recents
+        self.pipeline = pipeline
+        video = VideoPlayerController(
+            loopAtEnd: { settings.loopVideo },
+            autoplay: { settings.autoplayVideo }
+        )
+        filter = settings.initialFilter()
+        ambientCache.countLimit = 200
+        video.onPlaybackFailed = { [weak self] item, message in self?.videoPlaybackFailed(item, message: message) }
+    }
+
+    // MARK: - 打开
+
+    /// 启动时：设置里选了“打开上次的文件夹”，并且没有从访达等处打开文件时，打开最近一个还在的文件夹
+    func reopenLastFolderIfNeeded() {
+        // 跑单元测试时一览是宿主程序：不去打开用户真实的文件夹
+        let underTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        guard !underTests, settings.reopenLastFolder, !openRequested else { return }
+        // 文件夹、封面是否还在都在后台检查（可能在断开的移动硬盘或网络盘上，不能卡住主线程）
+        Task {
+            await recents.refreshAvailability()
+            guard !openRequested, let last = recents.existing(limit: 1).first else { return }
+            let cover = last.coverPath
+            let coverExists = await Task.detached(priority: .userInitiated) {
+                cover.map { FileManager.default.fileExists(atPath: $0) } ?? false
+            }.value
+            guard !openRequested else { return }
+            // 有封面（上次停留的文件）就从那个文件开始
+            open(coverExists ? URL(fileURLWithPath: cover ?? last.path) : last.url)
+        }
+    }
+
+    /// 已经要求打开过文件（启动时用来判断要不要自动打开上次的文件夹）
+    private(set) var openRequested = false
+
+    func open(_ url: URL) {
+        openRequested = true
+        scanTask?.cancel()
+        openError = nil
+        saveRecentCover()
+        Perf.mark("open")
+        NSDocumentController.shared.noteNewRecentDocumentURL(url)
+        let pipeline = self.pipeline
+        scanTask = Task {
+            // 重新打开文件夹：之前记住的“打不开”可能已经过时（文件被修好或换掉）
+            await pipeline.clearFailures()
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { try FolderScanner.open(url) }
+            }.value
+            guard !Task.isCancelled else { return }
+            switch result {
+            case .success(let r):
+                // 换了文件夹：之前的删除不能再撤销（文件夹已经不在眼前）
+                if r.folder.standardizedFileURL.path != folderURL?.standardizedFileURL.path { undoStack.removeAll() }
+                apply(r)
+                if !r.folderUnreadable {
+                    recents.record(folder: r.folder, cover: current?.url, itemCount: r.items.count)
+                    startWatching(r.folder)
+                } else {
+                    stopWatching()
+                }
+                if r.folderUnreadable {
+                    openError = String(localized: "没有权限读取“\(r.folder.lastPathComponent)”文件夹，只显示这一个文件。可在 系统设置 › 隐私与安全性 › 文件与文件夹 中允许一览访问。",
+                                       comment: "打开文件时读不到所在文件夹；%@ 是文件夹名")
+                }
+            case .failure(let error):
+                Log.app.error("打开失败 \(error.localizedDescription, privacy: .public)")
+                openError = String(localized: "无法打开：\(error.localizedDescription)", comment: "%@ 是系统给出的错误说明")
+            }
+        }
+    }
+
+    /// 显示扫描结果（测试里直接调用，绕过文件扫描）
+    func apply(_ result: FolderScanner.Result) {
+        Perf.mark("folder scanned")
+        folderURL = result.folder
+        allItems = result.items
+        hasOpenedFolder = true
+        recount()
+        let opened = result.initialIndex.map { result.items[$0] }
+        // 记住的类型里没有内容，或者打开的文件不属于这个类型时，回到“全部”
+        if counts[filter] == 0 || (opened.map { !filter.includes($0) } ?? false) {
+            filter = .all
+        }
+        items = filter.apply(allItems)
+        displayed = nil
+        displayedItem = nil
+        let index = FilterSelection.index(keeping: opened, in: allItems, newList: items)
+        select(index)
+    }
+
+    /// 按 allItems 重新数“全部 / 图片 / 视频”
+    func recount() {
+        counts = [
+            .all: allItems.count,
+            .images: allItems.lazy.filter { $0.kind == .image }.count,
+            .videos: allItems.lazy.filter { $0.kind == .video }.count,
+        ]
+    }
+
+    /// 文件夹内容变了（删除、撤销、外部增删）：换成新的列表，并显示 target
+    /// （target 不在当前类型里时回到“全部”）。当前项没变时不重新加载
+    func replaceItems(_ newAll: [MediaItem], showing target: MediaItem?) {
+        let previous = current
+        allItems = newAll
+        recount()
+        if let target, !filter.includes(target) { filter = .all }
+        if counts[filter] == 0 { filter = .all }
+        items = filter.apply(allItems)
+        let index = target.flatMap { t in items.firstIndex(of: t) }
+        if let index, items[index] == previous {
+            currentIndex = index   // 同一个文件，只是位置变了：不重新加载
+        } else {
+            select(index)
+        }
+    }
+
+    func showOpenPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = SupportedFormats.allExtensions.compactMap { UTType(filenameExtension: $0) } + [.folder]
+        panel.message = String(localized: "选择一张图片、一个视频或一个文件夹")
+        panel.prompt = String(localized: "打开", comment: "打开面板的确认按钮")
+        if panel.runModal() == .OK, let url = panel.url { open(url) }
+    }
+
+    // MARK: - 类型切换
+
+    func setFilter(_ newFilter: MediaFilter) {
+        guard newFilter != filter, (counts[newFilter] ?? 0) > 0, pendingDelete == nil else { return }
+        let previous = current
+        filter = newFilter
+        settings.saveFilter(newFilter)
+        items = newFilter.apply(allItems)
+        let index = FilterSelection.index(keeping: previous, in: allItems, newList: items)
+        showToast(symbol: newFilter.symbol, text: newFilter.toastText(count: items.count))
+        if items[safe: index] == previous {
+            currentIndex = index   // 当前文件还在，原地不动，不需要重新加载
+        } else {
+            select(index)
+        }
+    }
+
+    // MARK: - 切换
+
+    func select(_ index: Int?) {
+        guard let index, items.indices.contains(index) else {
+            currentIndex = nil
+            loadCurrent()
+            return
+        }
+        guard index != currentIndex || displayedItem != items[index] else { return }
+        Perf.beginSwitch(to: items[index].url)
+        currentIndex = index
+        rotation = 0
+        loadCurrent()
+        // 只用键盘切换时鼠标不动，也要开始计时自动隐藏
+        scheduleHide()
+    }
+
+    func next() { step(1) }
+    func previous() { step(-1) }
+    func first() { if !items.isEmpty { select(0) } }
+    func last() { if !items.isEmpty { select(items.count - 1) } }
+    func step(_ delta: Int) {
+        guard let i = currentIndex,
+              let target = Navigation.target(from: i, delta: delta > 0 ? 1 : -1, count: items.count, wrap: settings.wrapAround)
+        else { return }
+        select(target)
+    }
+
+    // MARK: - 加载大图
+
+    /// 解码尺寸：所在屏幕的长边像素（Retina 按物理像素）
+    private var displayMaxPixel: Int {
+        if let screenMaxPixel { return screenMaxPixel }
+        guard let screen = NSApp.keyWindow?.screen ?? NSScreen.main else { return 3072 }
+        return Self.maxPixel(for: screen)
+    }
+
+    static func maxPixel(for screen: NSScreen) -> Int {
+        Int(max(screen.frame.width, screen.frame.height) * screen.backingScaleFactor)
+    }
+
+    private func displayVariant(for item: MediaItem) -> ImageDecoder.Variant {
+        .display(maxPixel: displayMaxPixel)
+    }
+
+    /// 窗口换了屏幕或缩放比例变了（例如从普通显示器拖到 Retina 屏）：记下新的解码尺寸；
+    /// 变大时把当前图片按新尺寸重新解码，否则一直是模糊的
+    func displayDidChange(maxPixel: Int) {
+        guard maxPixel > 0, maxPixel != screenMaxPixel else { return }
+        let previous = displayMaxPixel
+        screenMaxPixel = maxPixel
+        guard maxPixel > previous, fullResTask == nil, !isDecodingRaw, failure == nil,
+              let item = current, item == displayedItem, item.kind == .image,
+              let shown = displayed, !shown.isPreview, shown.isDownsampled || item.format == .svg,
+              max(shown.image.width, shown.image.height) < maxPixel else { return }
+        let variant = displayVariant(for: item)
+        fullResTask = Task {
+            defer { fullResTask = nil }
+            // 期间已经换成了原始分辨率等更清晰的版本就不替换
+            guard let image = try? await pipeline.image(item, variant), !Task.isCancelled, item == current,
+                  image !== displayed, (displayed?.image.width ?? 0) < image.image.width else { return }
+            show(image, for: item)
+        }
+    }
+
+    private func fullVariant(for item: MediaItem) -> ImageDecoder.Variant {
+        // SVG 是矢量图，“原始分辨率”就是按更大的尺寸重新栅格化
+        item.format == .svg ? .display(maxPixel: 8192) : .full
+    }
+
+    private func loadCurrent() {
+        refreshInfo()
+        loadTask?.cancel()
+        fullResTask?.cancel()
+        fullResTask = nil
+        isDecodingRaw = false
+        unplayable = nil
+        // 切到视频才开始加载；切走时暂停并释放（PRD：视频不预加载整段）
+        if let item = current, item.kind == .video { video.prepare(item) } else { video.stop() }
+        guard let item = current else {
+            displayed = nil
+            displayedItem = nil
+            placeholder = nil
+            failure = nil
+            ambient = nil
+            ambientItemURL = nil
+            return
+        }
+        updateAmbient(for: item)
+        let variant = displayVariant(for: item)
+        loadTask = Task {
+            if let hit = await pipeline.cached(item, variant) {
+                show(hit, for: item)
+                preloadNeighbors()
+                return
+            }
+            // 还没解码好：先用缩略图占位（模糊一点也比黑屏好）
+            failure = nil
+            if displayedItem != item {
+                displayed = nil
+                displayedItem = item
+                placeholder = ThumbnailStore.shared.cached(item)?.image
+            }
+            if item.format == .raw {
+                if let preview = try? await pipeline.image(item, .rawPreview), !Task.isCancelled {
+                    show(preview, for: item)
+                    isDecodingRaw = true
+                }
+                preloadNeighbors()
+            }
+            do {
+                let image = try await decodeCurrent(item, variant)
+                guard !Task.isCancelled else { return }
+                show(image, for: item)
+            } catch let decodeFailure as DecodeFailure {
+                guard !Task.isCancelled else { return }
+                displayed = nil
+                placeholder = nil
+                failure = decodeFailure
+            } catch {
+                return   // 切到了别的文件
+            }
+            isDecodingRaw = false
+            preloadNeighbors()
+        }
+    }
+
+    /// 解码当前项。解码被过期的取消误伤（自己没被取消、它仍是当前项）时再试一次，
+    /// 否则会一直停在模糊的占位缩略图上
+    private func decodeCurrent(_ item: MediaItem, _ variant: ImageDecoder.Variant) async throws -> DecodedImage {
+        do {
+            return try await pipeline.image(item, variant)
+        } catch is CancellationError where !Task.isCancelled && item == current {
+            return try await pipeline.image(item, variant)
+        }
+    }
+
+    private func show(_ image: DecodedImage, for item: MediaItem) {
+        guard item != unplayable else { return }
+        Perf.shown(item.url, isPreview: image.isPreview)
+        displayed = image
+        displayedItem = item
+        placeholder = nil
+        failure = nil
+    }
+
+    /// 预加载前后各 2 张；离开这个范围的进行中解码会被取消
+    private func preloadNeighbors() {
+        guard let i = currentIndex else { return }
+        // 动图解码很占内存，不预加载；视频只预加载静帧
+        let neighbors = [i + 1, i - 1, i + 2, i - 2].filter { items.indices.contains($0) }.map { items[$0] }
+        let variants = neighbors.filter { $0.format != .gif }.map { ($0, displayVariant(for: $0)) }
+        let pipeline = self.pipeline
+        Task {
+            // 要保留的范围在真正执行时按最新位置算，并且总是包含当前项：
+            // 否则快速跳转时，按旧位置算出的取消会误杀当前图片的解码
+            await pipeline.cancelAll(except: keepSet())
+            for (item, variant) in variants {
+                if item.format == .raw { await pipeline.preload(item, .rawPreview) }
+                await pipeline.preload(item, variant)
+            }
+        }
+        for item in neighbors { prefetchAmbient(for: item) }
+    }
+
+    /// 当前项和前后各 2 张
+    private func keepSet() -> Set<URL> {
+        guard let i = currentIndex else { return [] }
+        var keep = Set((i - 2...i + 2).filter { items.indices.contains($0) }.map { items[$0].url })
+        if let current { keep.insert(current.url) }
+        if let displayedItem { keep.insert(displayedItem.url) }
+        return keep
+    }
+
+    /// 放大超过屏幕解码尺寸时，换成原始分辨率
+    func requestFullResolution() {
+        // RAW 还在完整解码（现在显示的是内嵌预览）时不要再同时解一份原始分辨率
+        guard let item = displayedItem, item == current, let shown = displayed, shown.isDownsampled,
+              !shown.isPreview, !isDecodingRaw,
+              fullResTask == nil || fullResTask?.isCancelled == true else { return }
+        let variant = fullVariant(for: item)
+        fullResTask = Task {
+            defer { fullResTask = nil }
+            guard let image = try? await pipeline.image(item, variant), !Task.isCancelled, item == current,
+                  image !== displayed else { return }
+            show(image, for: item)
+        }
+    }
+
+    /// 播放器打不开当前视频：显示出错卡片
+    private func videoPlaybackFailed(_ item: MediaItem, message: String?) {
+        guard item == current else { return }
+        Log.app.error("视频无法播放 \(item.name, privacy: .public)：\(message ?? "", privacy: .public)")
+        unplayable = item
+        displayed = nil
+        placeholder = nil
+        // 文件不见了 / 读不了就照实说，其他情况统一说“无法播放”
+        failure = ImageDecoder.accessFailure(item) ?? DecodeFailure(
+            reason: String(localized: "这个视频无法播放。"),
+            detail: String(localized: "播放失败 · \(Formatting.fileSize(item.fileSize))", comment: "%@ 是文件大小"),
+            kind: .unplayable)
+    }
+
+    func revealCurrentInFinder() {
+        guard let url = current?.url else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    func copyCurrentPath() {
+        guard let path = current?.url.path else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(path, forType: .string)
+    }
+
+    /// 文件夹同步发现这些文件变了：清掉解码失败记录、缩略图、环境光和信息缓存
+    func forgetCaches(for urls: Set<URL>) {
+        guard !urls.isEmpty else { return }
+        let pipeline = self.pipeline
+        Task { await pipeline.forget(urls) }
+        ThumbnailStore.shared.forget(urls)
+        for url in urls { ambientCache.removeObject(forKey: url as NSURL) }
+        forgetMetadata(for: urls)
+    }
+
+    // MARK: - 环境光
+
+    private func updateAmbient(for item: MediaItem) {
+        ambientTask?.cancel()
+        if let hit = ambientCache.object(forKey: item.url as NSURL) {
+            ambient = hit.image
+            ambientItemURL = item.url
+            return
+        }
+        ambientTask = Task {
+            let image = await makeAmbient(for: item)
+            guard !Task.isCancelled else { return }
+            ambient = image
+            ambientItemURL = item.url
+        }
+    }
+
+    private func prefetchAmbient(for item: MediaItem) {
+        guard ambientCache.object(forKey: item.url as NSURL) == nil else { return }
+        Task { _ = await makeAmbient(for: item) }
+    }
+
+    private func makeAmbient(for item: MediaItem) async -> CGImage? {
+        guard let thumb = await ThumbnailStore.shared.thumbnail(for: item)?.image else { return nil }
+        let rendered = await Task.detached(priority: .userInitiated) { AmbientRenderer.render(thumb) }.value
+        if let rendered { ambientCache.setObject(CGImageBox(rendered), forKey: item.url as NSURL) }
+        return rendered
+    }
+
+    // MARK: - 缩放
+
+    func zoom(_ action: ZoomCommand.Action) {
+        guard current != nil else { return }
+        serial += 1
+        zoomCommand = ZoomCommand(action: action, serial: serial)
+    }
+
+    // MARK: - 旋转
+
+    /// 旋转显示（quarterTurns：1 = 顺时针 90°，-1 = 逆时针 90°）
+    func rotate(_ quarterTurns: Int) {
+        guard current != nil, failure == nil else { return }
+        rotation = ((rotation + quarterTurns) % 4 + 4) % 4
+    }
+
+    // MARK: - 最近打开
+
+    /// 记下当前停留的文件，下次在欢迎界面里当作这个文件夹的封面
+    func saveRecentCover() {
+        guard let folder = folderURL, let url = current?.url else { return }
+        recents.updateCover(folder: folder, cover: url)
+    }
+
+    // MARK: - 控件自动隐藏
+
+    /// 鼠标在窗口里移动
+    func noteMouseActivity() {
+        if !chromeVisible {
+            withAnimation(.easeOut(duration: 0.15)) { chromeVisible = true }
+        }
+        scheduleHide()
+    }
+
+    func setHovering(_ control: String, _ hovering: Bool) {
+        if hovering { hoveredControls.insert(control) } else { hoveredControls.remove(control) }
+        if hovering {
+            hideTask?.cancel()
+            hideTask = nil
+        } else {
+            scheduleHide()
+        }
+    }
+
+    private func scheduleHide() {
+        // 没开自动隐藏：什么都不用做（鼠标每动一下都会走到这里）
+        guard settings.autoHideControls else {
+            hideTask?.cancel()
+            hideTask = nil
+            return
+        }
+        hideDeadline = .now + .seconds(settings.hideDelay)
+        // 已经在计时：只把时间点往后推
+        guard hideTask == nil else { return }
+        hideTask = Task {
+            // 睡到时间点；期间时间点被推后就接着睡
+            while hideDeadline > .now {
+                try? await Task.sleep(until: hideDeadline, clock: .continuous)
+                if Task.isCancelled { return }
+            }
+            hideTask = nil
+            guard hoveredControls.isEmpty, canAutoHide, !ShotHooks.keepsChrome else { return }
+            withAnimation(.easeOut(duration: 0.35)) { chromeVisible = false }
+        }
+    }
+
+    /// 只有在看图或视频时才自动隐藏；出错、空文件夹时控件一直显示
+    private var canAutoHide: Bool {
+        settings.autoHideControls && current != nil && failure == nil && pendingDelete == nil
+    }
+
+    // MARK: - 提示条
+
+    func showToast(symbol: String, text: String, detail: String? = nil, action: ToastAction? = nil,
+                   duration: Double = 1.6) {
+        serial += 1
+        toast = Toast(symbol: symbol, text: text, detail: detail, action: action, serial: serial)
+        toastTask?.cancel()
+        toastTask = Task {
+            try? await Task.sleep(for: .seconds(duration))
+            guard !Task.isCancelled else { return }
+            toast = nil
+        }
+    }
+
+    func hideToast() {
+        toastTask?.cancel()
+        toast = nil
+    }
+
+    func performToastAction(_ action: ToastAction) {
+        switch action {
+        case .undoDelete: Task { await undoDelete() }
+        }
+    }
+
+    // MARK: - 键盘
+
+    /// 处理没有 ⌘ 的单键快捷键；返回 true 表示已处理
+    func handleKey(_ event: NSEvent) -> Bool {
+        let handled = handleKeyCommand(event)
+        // 键盘操作也算“有动作”：重新开始自动隐藏计时（不主动显示控件）
+        if handled { scheduleHide() }
+        return handled
+    }
+
+    private func handleKeyCommand(_ event: NSEvent) -> Bool {
+        let mods = event.modifierFlags.intersection([.command, .control, .option])
+        // 删除确认对话框：Return 确认，Esc 取消；其他按键不起作用（菜单里的 ⌘ 快捷键也已置灰）
+        if pendingDelete != nil {
+            switch event.keyCode {
+            case 36, 76: confirmDelete()   // Return、小键盘 Enter
+            case 53: cancelDelete()        // Esc
+            case 49: deleteDontAsk.toggle()   // 空格：勾选“不再询问”
+            default: break
+            }
+            return true
+        }
+        // ⌫ 和 ⌘⌫：移到废纸篓
+        if event.keyCode == 51, mods.isEmpty || mods == [.command] {
+            requestDelete()
+            return true
+        }
+        // Esc：先关信息面板，再退出全屏
+        if event.keyCode == 53, mods.isEmpty {
+            if infoVisible { setInfoVisible(false); return true }
+            if isFullScreen { toggleFullScreen(); return true }
+            return false
+        }
+        if mods.contains(.command) {
+            switch event.charactersIgnoringModifiers {
+            case "=", "+": zoom(.zoomIn); return true
+            case "-", "−": zoom(.zoomOut); return true
+            case "1": setFilter(.all); return true
+            case "2": setFilter(.images); return true
+            case "3": setFilter(.videos); return true
+            default: return false
+            }
+        }
+        guard mods.isEmpty else { return false }
+        switch event.keyCode {
+        case 123, 126, 116: previous(); return true   // ← ↑ PageUp
+        case 124, 125, 121: next(); return true       // → ↓ PageDown
+        case 115: first(); return true                // Home
+        case 119: last(); return true                 // End
+        default: break
+        }
+        switch event.charactersIgnoringModifiers?.lowercased() {
+        case "0": zoom(.fit); return true
+        case "1": zoom(.actualSize); return true
+        case "t":
+            withAnimation(.easeInOut(duration: 0.25)) { stripVisible.toggle() }
+            return true
+        case "r":
+            rotate(event.modifierFlags.contains(.shift) ? -1 : 1)
+            return true
+        case "i":
+            toggleInfo()
+            return true
+        case "f":
+            toggleFullScreen()
+            return true
+        default: break
+        }
+        // 视频：空格 播放/暂停，J / L 快退/快进 5 秒，M 静音（方向键留给切换文件）
+        guard current?.kind == .video, failure == nil, video.isActive else { return false }
+        if event.keyCode == 49 { video.togglePlay(); return true }   // 空格
+        switch event.charactersIgnoringModifiers?.lowercased() {
+        case "j": video.skip(by: -VideoTransport.skipSeconds); return true
+        case "l": video.skip(by: VideoTransport.skipSeconds); return true
+        case "m": video.toggleMute(); return true
+        default: return false
+        }
+    }
+}
+
+/// NSCache 只能存对象，CGImage 包一层
+final class CGImageBox: @unchecked Sendable {
+    let image: CGImage
+    init(_ image: CGImage) { self.image = image }
+}
+
+extension Array {
+    subscript(safe index: Int?) -> Element? {
+        guard let index, indices.contains(index) else { return nil }
+        return self[index]
+    }
+}

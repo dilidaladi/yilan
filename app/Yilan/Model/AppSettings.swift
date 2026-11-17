@@ -1,0 +1,136 @@
+import Foundation
+import Observation
+
+/// 设置（设计稿 05 系统界面 · 设置）。全部存在 UserDefaults 里，界面和浏览逻辑共用一份
+@MainActor
+@Observable
+final class AppSettings {
+    static let shared = AppSettings(defaults: AppDefaults.store)
+
+    enum Key {
+        static let loopVideo = "loopVideo"
+        static let autoplayVideo = "autoplayVideo"
+        static let rememberFilter = "rememberFilter"
+        static let wrapAround = "wrapAround"
+        static let reopenLastFolder = "reopenLastFolder"
+        static let startFilter = "startFilter"
+        static let autoHideControls = "autoHideControls"
+        static let hideDelay = "hideDelay"
+        static let ambientBackground = "ambientBackground"
+        static let scrollZooms = "scrollZooms"
+        static let confirmBeforeDelete = "confirmBeforeDelete"
+    }
+
+    /// 设置里“默认显示”的选项：沿用上次，或者固定一种
+    enum StartFilter: String, CaseIterable, Identifiable {
+        case last, all, images, videos
+        var id: String { rawValue }
+        var title: LocalizedStringResource {
+            switch self {
+            case .last: "上次的选择"
+            case .all: "全部（图片和视频）"
+            case .images: "只看图片"
+            case .videos: "只看视频"
+            }
+        }
+    }
+
+    /// 隐藏延迟的范围（秒）
+    static let hideDelayRange: ClosedRange<Double> = 1...10
+
+    /// 视频播完后从头循环
+    var loopVideo: Bool { didSet { defaults.set(loopVideo, forKey: Key.loopVideo) } }
+    /// 切到视频时自动播放（PRD：默认停在第一帧）
+    var autoplayVideo: Bool { didSet { defaults.set(autoplayVideo, forKey: Key.autoplayVideo) } }
+    /// 启动时的“全部 / 图片 / 视频”（旧版的“记住上次的类型”开关并进了这里）
+    var startFilter: StartFilter { didSet { defaults.set(startFilter.rawValue, forKey: Key.startFilter) } }
+    /// 启动时打开上次的文件夹（否则显示欢迎界面）
+    var reopenLastFolder: Bool { didSet { defaults.set(reopenLastFolder, forKey: Key.reopenLastFolder) } }
+    /// 鼠标静止一段时间后隐藏控件
+    var autoHideControls: Bool { didSet { defaults.set(autoHideControls, forKey: Key.autoHideControls) } }
+    /// 隐藏延迟（秒）
+    var hideDelay: Double { didSet { defaults.set(hideDelay, forKey: Key.hideDelay) } }
+    /// 用当前图片的颜色铺满窗口背景
+    var ambientBackground: Bool { didSet { defaults.set(ambientBackground, forKey: Key.ambientBackground) } }
+    /// 鼠标滚轮直接缩放（按住 ⌃ 时切换图片）；关闭时反过来
+    var scrollZooms: Bool { didSet { defaults.set(scrollZooms, forKey: Key.scrollZooms) } }
+    /// 到达最后一个时循环到第一个（PRD：默认停住）
+    var wrapAround: Bool { didSet { defaults.set(wrapAround, forKey: Key.wrapAround) } }
+    /// 移到废纸篓前先确认（确认框里勾选“不再询问”会关掉它）
+    var confirmBeforeDelete: Bool { didSet { defaults.set(confirmBeforeDelete, forKey: Key.confirmBeforeDelete) } }
+
+    @ObservationIgnored private let defaults: UserDefaults
+
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
+        defaults.register(defaults: [
+            Key.loopVideo: false,
+            Key.autoplayVideo: false,
+            Key.rememberFilter: true,
+            Key.wrapAround: false,
+            Key.reopenLastFolder: true,
+            Key.autoHideControls: false,  // 默认不自动隐藏控件（用户反馈：按钮自己消失不顺手）
+            Key.hideDelay: 2.0,
+            Key.ambientBackground: true,
+            Key.scrollZooms: false,
+            Key.confirmBeforeDelete: true,
+        ])
+        loopVideo = defaults.bool(forKey: Key.loopVideo)
+        autoplayVideo = defaults.bool(forKey: Key.autoplayVideo)
+        // 旧版存的是“记住上次的类型”开关
+        if let raw = defaults.string(forKey: Key.startFilter), let value = StartFilter(rawValue: raw) {
+            startFilter = value
+        } else {
+            startFilter = defaults.bool(forKey: Key.rememberFilter) ? .last : .all
+        }
+        reopenLastFolder = defaults.bool(forKey: Key.reopenLastFolder)
+        autoHideControls = defaults.bool(forKey: Key.autoHideControls)
+        hideDelay = min(max(defaults.double(forKey: Key.hideDelay), Self.hideDelayRange.lowerBound), Self.hideDelayRange.upperBound)
+        ambientBackground = defaults.bool(forKey: Key.ambientBackground)
+        scrollZooms = defaults.bool(forKey: Key.scrollZooms)
+        wrapAround = defaults.bool(forKey: Key.wrapAround)
+        confirmBeforeDelete = defaults.bool(forKey: Key.confirmBeforeDelete)
+    }
+
+    /// 启动时的类型
+    func initialFilter() -> MediaFilter {
+        switch startFilter {
+        case .last: defaults.string(forKey: MediaFilter.defaultsKey).flatMap(MediaFilter.init(rawValue:)) ?? .all
+        case .all: .all
+        case .images: .images
+        case .videos: .videos
+        }
+    }
+
+    /// 滚轮这一下是缩放还是切换（按住 ⌃ 或 ⌘ 时反过来）
+    func scrollShouldZoom(modifierPressed: Bool) -> Bool {
+        scrollZooms != modifierPressed
+    }
+
+    func saveFilter(_ filter: MediaFilter) {
+        defaults.set(filter.rawValue, forKey: MediaFilter.defaultsKey)
+    }
+}
+
+/// 设置和最近打开存放的位置。
+/// 测试和截图时可以用启动参数 `--defaults-suite=名字` 换一个独立的存储，不影响真实数据
+@MainActor
+enum AppDefaults {
+    static let store: UserDefaults = {
+        guard let arg = CommandLine.arguments.first(where: { $0.hasPrefix("--defaults-suite=") }),
+              let name = arg.split(separator: "=", maxSplits: 1).last.map(String.init), !name.isEmpty,
+              let suite = UserDefaults(suiteName: name) else { return .standard }
+        return suite
+    }()
+}
+
+/// 上下切换的目标位置（到头停住，或者循环）
+enum Navigation {
+    static func target(from index: Int, delta: Int, count: Int, wrap: Bool) -> Int? {
+        guard count > 0 else { return nil }
+        let next = index + delta
+        if (0..<count).contains(next) { return next }
+        guard wrap, count > 1 else { return nil }
+        return (next % count + count) % count
+    }
+}

@@ -1,0 +1,46 @@
+import Foundation
+
+/// 截图用的启动参数（只在 Debug 版里生效，Release 里全部为空）。
+/// 自动截图时一览不在最前面，收不到鼠标悬停，所以用参数直接摆出要截的状态：
+/// `--shot-hover=0.62` 进度条固定在 62% 处显示时间气泡，并且控件不自动隐藏；
+/// `--shot-drop=路径` 显示拖入遮罩（内容按这个路径算）；
+/// `--shot-settings` 启动后打开设置窗口（`--shot-settings=general` 打开指定的页面）；
+/// `--shot-info` 打开信息面板；
+/// `--shot-delete=confirm` 显示删除确认框；`--shot-delete=after` 真的删除当前文件
+///   （只对 /tmp 下的测试副本生效，移到 /tmp 下的假废纸篓，不进用户的废纸篓）；
+/// `--shot-fullscreen=idle|top|bottom` 启动后进入全屏，并固定成静止 / 顶部 / 底部出现控件的样子；
+/// `--shot-menus` 启动后把菜单栏的内容打印到标准输出（检查菜单项和快捷键）；
+/// `--shot-window=1000x760` 启动后把窗口内容区改成这个大小（截窄窗口、中等宽度）。
+enum ShotHooks {
+    #if DEBUG
+    private static func value(_ name: String) -> String? {
+        CommandLine.arguments.first { $0.hasPrefix("--\(name)=") }
+            .map { String($0.dropFirst(name.count + 3)) }
+    }
+    static let hoverFraction: Double? = value("shot-hover").flatMap(Double.init)
+    static let dropPath: String? = value("shot-drop")
+    static let settingsPane: String? = value("shot-settings")
+    static let openSettings = CommandLine.arguments.contains("--shot-settings") || settingsPane != nil
+    static let openInfo = CommandLine.arguments.contains("--shot-info")
+    static let deleteState: String? = value("shot-delete")
+    static let fullScreenState: String? = value("shot-fullscreen")
+    static let dumpMenus = CommandLine.arguments.contains("--shot-menus")
+    static let windowSize: CGSize? = value("shot-window").flatMap { text in
+        let parts = text.split(separator: "x").compactMap { Double($0) }
+        return parts.count == 2 ? CGSize(width: parts[0], height: parts[1]) : nil
+    }
+    #else
+    static let settingsPane: String? = nil
+    static let hoverFraction: Double? = nil
+    static let dropPath: String? = nil
+    static let openSettings = false
+    static let openInfo = false
+    static let deleteState: String? = nil
+    static let fullScreenState: String? = nil
+    static let dumpMenus = false
+    static let windowSize: CGSize? = nil
+    #endif
+
+    /// 截图时不让控件自动隐藏
+    static var keepsChrome: Bool { hoverFraction != nil || openInfo || deleteState != nil }
+}

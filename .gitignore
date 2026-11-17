@@ -1,0 +1,25 @@
+# 系统文件
+.DS_Store
+
+# 编译产物
+app/build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+
+# RAW 测试文件体积大（约 184 MB），是网上下载的公开样张，不放进仓库
+app/Fixtures/raw/
+
+# 发布产物（scripts/release.sh 生成）
+dist/*
+!dist/RELEASE_NOTES.md
+build/
+*.zip
+
+# 其他
+*.xcodeproj/project.xcworkspace/xcuserdata/
+.claude/
+
+# 介绍视频、封面和配套素材：只在本机用，不放进仓库
+design/intro-video*
+

@@ -1,0 +1,115 @@
+name: Yilan
+options:
+  bundleIdPrefix: com.yilan
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+  # 开发语言（字符串目录的源语言）是简体中文
+  developmentLanguage: zh-Hans
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    # 界面文字放在字符串目录（Localizable.xcstrings / InfoPlist.xcstrings）里
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+    SWIFT_EMIT_LOC_STRINGS: YES
+targets:
+  Yilan:
+    type: application
+    platform: macOS
+    sources:
+      - path: Yilan
+    settings:
+      base:
+        PRODUCT_NAME: Yilan
+        PRODUCT_BUNDLE_IDENTIFIER: com.yilan.viewer
+        MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: "2"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Yilan/Info.plist
+        # TODO(沙盒)：第一版本地直接构建，暂时关闭 App Sandbox。
+        # 打开一张图后需要读取同目录的其他文件，沙盒会拦截；上架 App Store 前需要改为
+        # 通过 NSOpenPanel 取得文件夹授权 + security-scoped bookmark。
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        COMBINE_HIDPI_IMAGES: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    info:
+      path: Yilan/Info.plist
+      properties:
+        CFBundleDisplayName: 一览
+        CFBundleDevelopmentRegion: zh-Hans
+        # 以后加语言：在两个字符串目录里加翻译，再加到这里和 AppLanguage
+        CFBundleLocalizations: [zh-Hans, en]
+        CFBundleName: Yilan
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.photography
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSHumanReadableCopyright: © 2026 一览
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: 图片
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.jpeg
+              - public.png
+              - org.webmproject.webp
+              - public.heic
+              - public.heif
+              - com.compuserve.gif
+              - public.svg-image
+              - public.tiff
+              - com.microsoft.bmp
+          - CFBundleTypeName: 相机 RAW
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.camera-raw-image
+              - com.canon.cr2-raw-image
+              - com.canon.cr3-raw-image
+              - com.nikon.raw-image
+              - com.sony.arw-raw-image
+              - com.fuji.raw-image
+              - com.panasonic.rw2-raw-image
+              - com.olympus.or-raw-image
+              - com.adobe.raw-image
+          - CFBundleTypeName: 视频
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.mpeg-4
+              - com.apple.m4v-video
+              - com.apple.quicktime-movie
+          - CFBundleTypeName: 文件夹
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.folder
+  YilanTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: YilanTests
+    dependencies:
+      - target: Yilan
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yilan.viewer.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Yilan.app/Contents/MacOS/Yilan
+        BUNDLE_LOADER: $(TEST_HOST)
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+schemes:
+  Yilan:
+    build:
+      targets:
+        Yilan: all
+        YilanTests: [test]
+    test:
+      targets:
+        - YilanTests
