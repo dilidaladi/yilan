@@ -28,12 +28,14 @@ struct TrashUndoStack: Equatable {
 /// 移到废纸篓和放回原处（会碰磁盘，在后台线程调用）
 enum TrashService {
     enum Failure: LocalizedError {
+        case unverifiedSource(String)
         case originalExists(String)
         case missingInTrash(String)
 
         var errorDescription: String? {
             switch self {
-            case .originalExists(let name): String(localized: "原位置已经有“\(name)”", comment: "撤销删除失败的原因；%@ 是文件名")
+            case .unverifiedSource(let name): String(localized: "无法确认“\(name)”仍是原文件，请重新打开后再试")
+            case .originalExists(let name): String(localized: "原位置已经有“\(name)”，请移开同名文件后重试")
             case .missingInTrash(let name): String(localized: "废纸篓里已经没有“\(name)”", comment: "撤销删除失败的原因；%@ 是文件名")
             }
         }
@@ -50,8 +52,17 @@ enum TrashService {
             .appendingPathComponent("yilan-fake-trash-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
     }()
 
-    /// 移到废纸篓，返回它在废纸篓里的位置
-    static func trash(_ url: URL) throws -> URL {
+    /// 用新 URL 读取属性，避免复用扫描目录时缓存的旧属性。
+    static func trash(_ item: MediaItem) throws -> URL {
+        let url = URL(filePath: item.url.path, directoryHint: .notDirectory)
+        let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey,
+                                                       .fileIdentifierKey, .fileSizeKey, .contentModificationDateKey])
+        guard let id = item.fileID, let values, values.fileIdentifier == id,
+              values.isRegularFile == true || values.isSymbolicLink == true,
+              values.fileSize.map(Int64.init) == item.fileSize,
+              values.contentModificationDate == item.modificationDate else {
+            throw Failure.unverifiedSource(item.name)
+        }
         if let dir = fakeTrashDirectory { return try moveToFakeTrash(url, directory: dir) }
         var resulting: NSURL?
         try FileManager.default.trashItem(at: url, resultingItemURL: &resulting)
@@ -81,7 +92,11 @@ enum TrashService {
     static func restore(_ entry: TrashEntry) throws {
         let fm = FileManager.default
         let name = entry.item.name
-        guard fm.fileExists(atPath: entry.trashedURL.path) else { throw Failure.missingInTrash(name) }
+        do {
+            _ = try fm.attributesOfItem(atPath: entry.trashedURL.path)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
+            throw Failure.missingInTrash(name)
+        }
         guard !fm.fileExists(atPath: entry.item.url.path) else { throw Failure.originalExists(name) }
         try fm.moveItem(at: entry.trashedURL, to: entry.item.url)
     }

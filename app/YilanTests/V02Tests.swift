@@ -300,28 +300,80 @@ struct TrashRoundTripTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         let url = folder.appendingPathComponent("IMG_2034.jpg")
         let original = try Data(contentsOf: url)
-        let trashed = try TrashService.trash(url)
+        let originalItem = try item(url)
+        let trashed = try TrashService.trash(originalItem)
         // 测试里只能进假废纸篓（/tmp 下），不能进用户的 ~/.Trash
         let fake = try #require(TrashService.fakeTrashDirectory)
         #expect(trashed.path.hasPrefix(fake.path))
         #expect(!trashed.path.contains("/.Trash/"))
         #expect(!FileManager.default.fileExists(atPath: url.path))
         #expect(FileManager.default.fileExists(atPath: trashed.path))
-        try TrashService.restore(TrashEntry(item: try fakeAt(url), trashedURL: trashed))
+        try TrashService.restore(TrashEntry(item: originalItem, trashedURL: trashed))
         #expect(try Data(contentsOf: url) == original)
         #expect(!FileManager.default.fileExists(atPath: trashed.path))
     }
 
-    @Test("原位置又有了同名文件：撤销失败，不覆盖")
-    func originalExists() throws {
+    @Test("原位置有同名文件：不覆盖，移开后可重试")
+    func originalExists() async throws {
         let folder = try fixtureCopy(["IMG_2034.jpg"])
         defer { try? FileManager.default.removeItem(at: folder) }
-        let url = folder.appendingPathComponent("IMG_2034.jpg")
-        let entry = TrashEntry(item: try fakeAt(url), trashedURL: try TrashService.trash(url))
+        let model = try open(folder)
+        let original = try #require(model.current)
+        let url = original.url
+        let bytes = try Data(contentsOf: url)
+        await model.performDelete(original)
+        let entry = try #require(model.undoStack.last)
         defer { try? FileManager.default.removeItem(at: entry.trashedURL) }
         try Data("new".utf8).write(to: url)
-        #expect(throws: TrashService.Failure.self) { try TrashService.restore(entry) }
+        await model.undoDelete()
         #expect(try Data(contentsOf: url) == Data("new".utf8))
+        #expect(model.canUndoDelete)
+        try FileManager.default.removeItem(at: url)
+        await model.undoDelete()
+        #expect(try Data(contentsOf: url) == bytes)
+        #expect(!model.canUndoDelete)
+    }
+
+    @Test("确认期间文件被同名替换：不移动新文件")
+    func replacementAtOriginalPath() async throws {
+        let folder = try fixtureCopy(["IMG_2034.jpg"])
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: folder) }
+        let model = try open(folder)
+        model.requestDelete()
+        let selected = try #require(model.pendingDelete)
+        let original = folder.appendingPathComponent("preserved.jpg")
+        try fm.moveItem(at: selected.url, to: original)
+        try fm.copyItem(at: original, to: selected.url)
+        try fm.setAttributes([.modificationDate: selected.modificationDate], ofItemAtPath: selected.url.path)
+        let replacementURL = URL(filePath: selected.url.path, directoryHint: .notDirectory)
+        let replacement = try item(replacementURL)
+        #expect(replacement.fileSize == selected.fileSize)
+        #expect(replacement.fileID != selected.fileID)
+        await model.performDelete(selected)
+        #expect(fm.fileExists(atPath: replacementURL.path))
+        #expect(model.undoStack.last == nil)
+    }
+
+    @Test("废纸篓里的文件已被移走：跳过这条记录后仍可撤销上一条")
+    func missingInTrash() async throws {
+        let folder = try fixtureCopy(["IMG_2034.jpg", "IMG_2052.jpg"])
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: folder) }
+        let model = try open(folder)
+        let first = try #require(model.current)
+        await model.performDelete(first)
+        let olderEntry = try #require(model.undoStack.last)
+        defer { try? fm.removeItem(at: olderEntry.trashedURL) }
+        let second = try #require(model.current)
+        await model.performDelete(second)
+        let newerEntry = try #require(model.undoStack.last)
+        try fm.removeItem(at: newerEntry.trashedURL)
+        await model.undoDelete()
+        #expect(model.undoStack.last == olderEntry)
+        await model.undoDelete()
+        #expect(fm.fileExists(atPath: first.url.path))
+        #expect(!model.canUndoDelete)
     }
 
     @Test("在一览里删除：显示下一个、数量更新、提示可撤销；连续撤销两次都放回来")
@@ -377,9 +429,11 @@ struct TrashRoundTripTests {
         #expect(model.allItems.count == 2)
     }
 
-    private func fakeAt(_ url: URL) throws -> MediaItem {
-        MediaItem(url: url, format: try #require(SupportedFormats.format(forExtension: url.pathExtension)),
-                  fileSize: 1, modificationDate: Date())
+    private func open(_ folder: URL) throws -> BrowserModel {
+        let model = BrowserModel(settings: AppSettings(defaults: freshDefaults()),
+                                 recents: RecentFolders(defaults: freshDefaults()))
+        model.apply(try FolderScanner.open(folder))
+        return model
     }
 }
 

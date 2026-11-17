@@ -36,7 +36,7 @@
 
 ## Download and install
 
-1. Download the latest `Yilan-<version>.zip` from [GitHub Releases](https://github.com/paddychenc75/yilan/releases), unzip it and drag `Yilan.app` into your Applications folder.
+1. Download the latest `Yilan-<version>.zip` from [this fork’s GitHub Releases](https://github.com/dilidaladi/yilan/releases), unzip it and drag `Yilan.app` into your Applications folder. The original project has its [own releases](https://github.com/paddychenc75/yilan/releases).
 2. The app is only ad-hoc signed. It is not signed with an Apple Developer ID and not notarized, so the first time you open it macOS will say it cannot verify the developer. There are two ways around that; use either one:
    - **GUI:** double-click the app once (it will be blocked), then open System Settings › Privacy & Security, scroll down to the message about Yilan and click "Open Anyway".
    - **Command line:** run
@@ -69,6 +69,8 @@ Build the release package (Release build, ad-hoc signing, zip, SHA-256; output g
 ```sh
 scripts/release.sh
 ```
+
+GitHub Actions runs tests on pull requests and pushes to `main`. When a `v<version>` tag matching the app version is pushed, a passing run produces a universal ZIP, a SHA-256 file, and a build provenance attestation. Extract the ZIP from the workflow artifact and verify it with `gh attestation verify <ZIP-path> -R <build-owner/repo>`. The attestation does not replace Apple notarization, and the workflow does not publish a GitHub Release.
 
 ## Test media and image credits
 

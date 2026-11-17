@@ -745,12 +745,12 @@
         }
       }
     },
-    "原位置已经有“%@”" : {
+    "原位置已经有“%@”，请移开同名文件后重试" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "“%@” already exists in the original location"
+            "value" : "“%@” already exists in the original location. Move it aside and try again."
           }
         }
       }
@@ -1859,6 +1859,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t move to Trash: %@"
+          }
+        }
+      }
+    },
+    "无法确认“%@”仍是原文件，请重新打开后再试" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t verify that “%@” is still the original file. Reopen it and try again."
           }
         }
       }

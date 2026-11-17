@@ -4,8 +4,8 @@ import SwiftUI
 /// 移到废纸篓和撤销（设计稿 08 · 删除到废纸篓）
 extension BrowserModel {
     /// 菜单项和 ⌫ 是否可用：主窗口在前、有当前文件、没有在等确认
-    var canDelete: Bool { current != nil && pendingDelete == nil && mainWindowIsKey }
-    var canUndoDelete: Bool { undoStack.canUndo && pendingDelete == nil }
+    var canDelete: Bool { current != nil && pendingDelete == nil && !trashBusy && mainWindowIsKey }
+    var canUndoDelete: Bool { undoStack.canUndo && pendingDelete == nil && !trashBusy }
 
     /// ⌫ / ⌘⌫ / 菜单：按设置先弹确认框，或者直接删
     func requestDelete() {
@@ -42,8 +42,7 @@ extension BrowserModel {
             trashBusy = false
             localChangeSerial += 1
         }
-        let url = item.url
-        let result = await Task.detached(priority: .userInitiated) { Result { try TrashService.trash(url) } }.value
+        let result = await Task.detached(priority: .userInitiated) { Result { try TrashService.trash(item) } }.value
         switch result {
         case .success(let trashed):
             undoStack.push(TrashEntry(item: item, trashedURL: trashed))
@@ -87,9 +86,9 @@ extension BrowserModel {
                 return FolderScanner.item(at: entry.item.url)
             }
         }.value
-        undoStack.pop()
         switch result {
         case .success(let restored):
+            if undoStack.last == entry { undoStack.pop() }
             hideToast()
             // 期间换了文件夹：文件已经放回去了，只是不在眼前，不用显示
             // 比较路径而不是 URL：目录 URL 末尾有没有“/”、/tmp 和 /private/tmp 都算同一个
@@ -100,6 +99,11 @@ extension BrowserModel {
             newAll.append(restored)
             replaceItems(FolderScanner.naturalSorted(newAll), showing: restored)
         case .failure(let error):
+            // 源文件已不存在才丢掉记录；同名冲突和暂时无法访问时保留记录供重试。
+            if let failure = error as? TrashService.Failure,
+               case .missingInTrash = failure, undoStack.last == entry {
+                undoStack.pop()
+            }
             Log.app.error("撤销删除失败 \(entry.item.name, privacy: .public)：\(error.localizedDescription, privacy: .public)")
             showToast(symbol: "exclamationmark.triangle",
                       text: String(localized: "无法撤销：\(error.localizedDescription)", comment: "%@ 是原因"),

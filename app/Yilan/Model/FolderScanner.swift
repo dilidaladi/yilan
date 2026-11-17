@@ -25,9 +25,9 @@ enum FolderScanner {
         } catch {
             // 读不了文件夹，但打开的这个文件本身可以读：退化为只看这一个
             guard let format = SupportedFormats.format(forExtension: url.pathExtension) else { throw error }
-            let v = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            let v = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .fileIdentifierKey])
             let single = MediaItem(url: url, format: format, fileSize: Int64(v?.fileSize ?? 0),
-                                   modificationDate: v?.contentModificationDate ?? .distantPast)
+                                   modificationDate: v?.contentModificationDate ?? .distantPast, fileID: v?.fileIdentifier)
             return Result(folder: folder, items: [single], initialIndex: 0, folderUnreadable: true)
         }
         let target = url.standardizedFileURL.resolvingSymlinksInPath().path

@@ -36,7 +36,7 @@
 
 ## 下载安装
 
-1. 到 [GitHub Releases](https://github.com/paddychenc75/yilan/releases) 下载最新的 `Yilan-<版本>.zip`，解压后把 `Yilan.app` 拖进「应用程序」文件夹。
+1. 到 [本 fork 的 GitHub Releases](https://github.com/dilidaladi/yilan/releases) 下载最新的 `Yilan-<版本>.zip`，解压后把 `Yilan.app` 拖进「应用程序」文件夹。原项目的安装包见[上游发布页](https://github.com/paddychenc75/yilan/releases)。
 2. 这个 App 只做了 ad-hoc 签名，没有 Apple 开发者账号签名，也没有公证，所以第一次打开时 macOS 会提示「无法验证开发者」。有两种解决办法，任选一种：
    - **图形界面：** 先双击打开一次（会被拦下），然后到「系统设置 › 隐私与安全性」，往下找到关于 Yilan 的提示，点「仍要打开」。
    - **命令行：** 在终端执行
@@ -69,6 +69,8 @@ xcodebuild -project Yilan.xcodeproj -scheme Yilan -destination 'platform=macOS' 
 ```sh
 scripts/release.sh
 ```
+
+GitHub Actions 会在 Pull Request 和推送到 `main` 时运行测试。推送与应用版本一致的 `v<版本>` 标签时，测试通过后会在该次 Actions 运行中提供通用 ZIP、SHA-256 文件和构建证明。解出 ZIP 后可用 `gh attestation verify <ZIP路径> -R <构建该包的所有者/仓库>` 验证来源。构建证明不替代 Apple 公证，工作流也不会自动发布 Release。
 
 ## 测试素材和图片来源
 
