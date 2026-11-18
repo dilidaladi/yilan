@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 /// 缩放指令：界面（菜单、快捷键）发给大图区
 struct ZoomCommand: Equatable {
-    enum Action: Equatable { case fit, actualSize, zoomIn, zoomOut, toggle }
+    enum Action: Equatable { case fit, actualSize, zoomIn, zoomOut, toggle, percent(Int) }
     let action: Action
     let serial: Int
 }
@@ -73,6 +73,7 @@ final class BrowserModel {
     private(set) var zoomCommand: ZoomCommand?
     /// 当前缩放比例（100 = 1 像素对应 1 点）；适应窗口时为 nil
     var zoomPercent: Int?
+    var editRequest: MediaItem?
     private(set) var toast: Toast?
     /// 当前文件的显示旋转（顺时针 90° 的倍数，只影响显示，不改文件）；切换文件后复位
     private(set) var rotation = 0
@@ -554,6 +555,15 @@ final class BrowserModel {
 
     // MARK: - 旋转
 
+    var canEditPhoto: Bool {
+        current?.format == .standard && failure == nil && pendingDelete == nil && !trashBusy
+    }
+
+    func requestPhotoEdit() {
+        guard canEditPhoto else { return }
+        editRequest = current
+    }
+
     /// 旋转显示（quarterTurns：1 = 顺时针 90°，-1 = 逆时针 90°）
     func rotate(_ quarterTurns: Int) {
         guard current != nil, failure == nil else { return }
@@ -694,6 +704,7 @@ final class BrowserModel {
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "0": zoom(.fit); return true
         case "1": zoom(.actualSize); return true
+        case "e": requestPhotoEdit(); return true
         case "t":
             withAnimation(.easeInOut(duration: 0.25)) { stripVisible.toggle() }
             return true

@@ -34,6 +34,9 @@ struct RootView: View {
         }
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
+        .sheet(item: $model.editRequest) { item in
+            PhotoEditorView(item: item, initialTurns: model.rotation) { model.open($0) }
+        }
         .background(WindowAccessor {
             window = $0
             model.attach(window: $0)
@@ -179,6 +182,9 @@ struct RootView: View {
                     }
                     // 欢迎界面不显示工具组（设计稿“首次启动 · 欢迎”）
                     if model.hasOpenedFolder {
+                        if model.current?.kind == .image && model.failure == nil {
+                            ZoomMenu(percent: model.zoomPercent, onZoom: model.zoom)
+                        }
                         ToolGroup(
                             enabled: model.current != nil && model.failure == nil,
                             infoSelected: showsInfoPanel,
@@ -186,6 +192,8 @@ struct RootView: View {
                             onInfo: model.toggleInfo,
                             onReveal: model.revealCurrentInFinder,
                             onCopyPath: model.copyCurrentPath,
+                            canEdit: model.canEditPhoto,
+                            onEdit: model.requestPhotoEdit,
                             onOpen: model.showOpenPanel
                         )
                     }
@@ -235,14 +243,6 @@ struct RootView: View {
                     .opacity(bottomVisible ? 1 : 0)
                     .allowsHitTesting(bottomVisible)
 
-                if let percent = model.zoomPercent {
-                    ZoomPill(percent: percent)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                        .padding(.leading, 32)
-                        .padding(.bottom, layout.fullScreen ? 24 : bottomInset + 8)
-                        .allowsHitTesting(false)
-                        .opacity(model.chromeVisible || layout.fullScreen ? 1 : 0)
-                }
             }
             .frame(width: size.width, height: size.height, alignment: .topLeading)
         }

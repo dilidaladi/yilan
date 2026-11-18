@@ -86,10 +86,16 @@ struct ToolGroup: View {
     let onInfo: () -> Void
     let onReveal: () -> Void
     let onCopyPath: () -> Void
+    let canEdit: Bool
+    let onEdit: () -> Void
     let onOpen: () -> Void
 
     var body: some View {
         HStack(spacing: 2) {
+            if canEdit {
+                ToolButton(symbol: "crop", help: "轻编辑", action: onEdit)
+                    .accessibilityLabel("轻编辑")
+            }
             // 按钮图标是逆时针箭头，点按向左转；R 向右转、⇧R 向左转（菜单“文件 › 向右旋转”）
             ToolButton(symbol: "arrow.counterclockwise", help: "向左旋转（⇧R）", action: onRotate)
                 .disabled(!enabled)
@@ -112,6 +118,37 @@ struct ToolGroup: View {
         .padding(.horizontal, 3)
         .frame(height: 36)
         .regularGlass(Capsule())
+    }
+}
+
+struct ZoomMenu: View {
+    let percent: Int?
+    let onZoom: (ZoomCommand.Action) -> Void
+
+    var body: some View {
+        Menu {
+            Button("适应窗口") { onZoom(.fit) }
+            Button("实际大小") { onZoom(.actualSize) }
+            Divider()
+            ForEach([200, 400, 800], id: \.self) { value in
+                Button("\(value)%") { onZoom(.percent(value)) }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                if let percent { Text("\(percent)%").monospacedDigit() }
+                else { Text("适应窗口") }
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+            }
+            .font(.system(size: 11, weight: .medium))
+            .padding(.horizontal, 10)
+            .frame(height: 36)
+            .regularGlass(Capsule())
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .fixedSize()
+        .accessibilityLabel("缩放比例")
     }
 }
 

@@ -98,6 +98,9 @@ struct AppCommands: Commands {
             Button("拷贝文件路径") { model.copyCurrentPath() }
                 .keyboardShortcut("c", modifiers: [.command, .option])
             Divider()
+            Button("轻编辑…") { model.requestPhotoEdit() }
+                .keyboardShortcut("e", modifiers: [])
+                .disabled(!model.canEditPhoto || !model.mainWindowIsKey)
             Button("向右旋转") { model.rotate(1) }
                 .keyboardShortcut("r", modifiers: [])
                 .disabled(model.current == nil)

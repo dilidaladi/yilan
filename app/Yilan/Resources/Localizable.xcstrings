@@ -1,6 +1,136 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
+    "%@ 编辑" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ edited"
+          }
+        }
+      }
+    },
+    "原图已变化，请关闭轻编辑并重新打开。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The original changed. Close Quick Edit and reopen it."
+          }
+        }
+      }
+    },
+    "无法保存图片副本。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The photo copy could not be saved."
+          }
+        }
+      }
+    },
+    "轻编辑最多支持 4800 万像素，且单边不超过 16384 像素。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quick Edit supports up to 48 megapixels, with a maximum side of 16,384 pixels."
+          }
+        }
+      }
+    },
+    "无法编辑这张图片。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This photo could not be edited."
+          }
+        }
+      }
+    },
+    "正在保存…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Saving…"
+          }
+        }
+      }
+    },
+    "另存副本" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save a Copy"
+          }
+        }
+      }
+    },
+    "副本保存在原文件旁，不含原图的 EXIF 信息。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copies are saved next to the original without its EXIF metadata."
+          }
+        }
+      }
+    },
+    "拖出矩形可裁切，支持 1–200% 尺寸。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag to crop. Resize from 1% to 200%."
+          }
+        }
+      }
+    },
+    "缩放比例" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scale"
+          }
+        }
+      }
+    },
+    "重置裁切" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset Crop"
+          }
+        }
+      }
+    },
+    "轻编辑…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quick Edit…"
+          }
+        }
+      }
+    },
+    "轻编辑" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quick Edit"
+          }
+        }
+      }
+    },
     "%@\n其他文件不受影响，可以继续浏览。" : {
       "localizations" : {
         "en" : {

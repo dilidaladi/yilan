@@ -52,6 +52,7 @@ final class ImageStageView: NSView {
     /// 放大时图片中心在视图里的位置
     private var zoomCenter: CGPoint = .zero
     private var reportedZoom: Int?
+    private var frameBeforeTitleBarFill: CGRect?
 
     // 滚轮切换
     private var scrollAccumulator: CGFloat = 0
@@ -323,6 +324,7 @@ final class ImageStageView: NSView {
         case .zoomIn: zoom(to: currentScale * 1.25, around: center, animated: true)
         case .zoomOut: zoom(to: currentScale / 1.25, around: center, animated: true)
         case .toggle: toggleZoom(at: center)
+        case .percent(let percent): zoom(to: CGFloat(percent) / 100, around: center, animated: true)
         }
     }
 
@@ -403,6 +405,28 @@ final class ImageStageView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if let window, !window.styleMask.contains(.fullScreen),
+           let height = window.contentView?.bounds.height,
+           height - event.locationInWindow.y <= Theme.titleBarHeight {
+            if event.clickCount == 2 {
+                switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+                case "None": break
+                case "Minimize": window.performMiniaturize(nil)
+                case "Fill":
+                    if let frame = (window.screen ?? NSScreen.main)?.visibleFrame {
+                        if window.frame.equalTo(frame), let previous = frameBeforeTitleBarFill {
+                            window.setFrame(previous, display: true, animate: true)
+                            frameBeforeTitleBarFill = nil
+                        } else {
+                            frameBeforeTitleBarFill = window.frame
+                            window.setFrame(frame, display: true, animate: true)
+                        }
+                    }
+                default: window.performZoom(nil)
+                }
+            } else if event.clickCount == 1 { window.performDrag(with: event) }
+            return
+        }
         if event.clickCount == 2 {
             toggleZoom(at: convert(event.locationInWindow, from: nil))
             return

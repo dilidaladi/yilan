@@ -39,6 +39,7 @@ struct ShortcutsPane: View {
             Shortcut(action: "向右 / 向左旋转", keys: [[.text("R")], [.text("⇧R")]]),
         ]),
         Section(title: "文件", rows: [
+            Shortcut(action: "轻编辑", keys: [[.text("E")]]),
             Shortcut(action: "移到废纸篓", keys: [[.symbol("delete.left", label: "⌫")]]),
             Shortcut(action: "撤销上一次删除", keys: [[.text("⌘Z")]]),
             Shortcut(action: "打开…", keys: [[.text("⌘O")]]),
